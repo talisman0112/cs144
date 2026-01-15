@@ -5,16 +5,33 @@
 #include <iostream>
 #include <span>
 #include <string>
-
 using namespace std;
 
-namespace {
 void get_URL( const string& host, const string& path )
 {
-  debug( "Function called: get_URL( \"{}\", \"{}\" )", host, path );
-  debug( "get_URL() function not yet implemented" );
+  // 1. 建立 TCP 连接
+  TCPSocket sock;
+  sock.connect( Address( host, "http" ) );
+
+  // 2. 构造并发送 HTTP 请求
+  string request;
+  request += "GET " + path + " HTTP/1.1\r\n";
+  request += "Host: " + host + "\r\n";
+  request += "Connection: close\r\n";
+  request += "\r\n";
+
+  sock.write_all( request );    // 或者 sock.write(request); 但 write_all 更符合语义
+  sock.shutdown( SHUT_WR );     // 告诉对端我们不再发送数据
+
+  // 3. 持续读取直到 EOF
+  string buffer;
+  while ( !sock.eof() ) {
+    sock.read( buffer );        // 把下一块数据读入 buffer
+    cout << buffer;             // 输出整个缓冲区内容
+    buffer.clear();             // 清空以便下一次读取
+  }
 }
-} // namespace
+
 
 int main( int argc, char* argv[] )
 {
