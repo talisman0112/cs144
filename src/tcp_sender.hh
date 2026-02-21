@@ -3,7 +3,7 @@
 #include "byte_stream.hh"
 #include "tcp_receiver_message.hh"
 #include "tcp_sender_message.hh"
-
+#include <deque>
 #include <functional>
 
 class TCPSender
@@ -11,8 +11,19 @@ class TCPSender
 public:
   /* Construct TCP sender with given default Retransmission Timeout and possible ISN */
   TCPSender( ByteStream&& input, Wrap32 isn, uint64_t initial_RTO_ms )
-    : input_( std::move( input ) ), isn_( isn ), initial_RTO_ms_( initial_RTO_ms )
-  {}
+  : input_( std::move( input ) )
+  , isn_( isn )
+  , initial_RTO_ms_( initial_RTO_ms )
+  , bytes_in_flight_( 0 )
+  , peer_window_( 1 )
+  , acked_abs_( 0 )
+  , next_abs_( 0 )
+  , outstanding_()          // 显式初始化
+  , timer_running_( false )
+  , consecutive_retx_( 0 )
+  , rto_ms_( initial_RTO_ms )
+  , timer_ms_( 0 )
+{}
 
   /* Generate an empty TCPSenderMessage */
   TCPSenderMessage make_empty_message() const;
@@ -28,7 +39,6 @@ public:
 
   /* Time has passed by the given # of milliseconds since the last time the tick() method was called */
   void tick( uint64_t ms_since_last_tick, const TransmitFunction& transmit );
-
   // Accessors
   uint64_t sequence_numbers_in_flight() const;  // How many sequence numbers are outstanding?
   uint64_t consecutive_retransmissions() const; // How many consecutive retransmissions have happened?
@@ -38,8 +48,19 @@ public:
 
 private:
   Reader& reader() { return input_.reader(); }
-
   ByteStream input_;
   Wrap32 isn_;
   uint64_t initial_RTO_ms_;
+  uint64_t bytes_in_flight_ {0};
+  uint16_t peer_window_ {1};//
+  uint64_t acked_abs_ {0};//已确认的绝对位置
+  uint64_t next_abs_ {0};//绝对位置
+  std::deque<TCPSenderMessage> outstanding_;
+  bool timer_running_ {false};
+  uint64_t consecutive_retx_ {0};
+  uint64_t rto_ms_ {0};
+  uint64_t timer_ms_ {0};
+  bool fin_sent_ {false};
+  bool rst_sent_ {false};
+  bool special_rst_condition_ {false};
 };
