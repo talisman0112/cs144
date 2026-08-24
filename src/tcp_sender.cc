@@ -10,7 +10,7 @@ uint64_t TCPSender::consecutive_retransmissions() const { return consecutive_ret
 
 void TCPSender::push(const TransmitFunction& transmit) {
   // === 1. 检查是否有错误需要发送 RST ===
-  if ((reader().has_error() || special_rst_condition_) && !rst_sent_) {
+  if (reader().has_error() && !rst_sent_) {
     TCPSenderMessage rst_msg = make_empty_message();
     rst_msg.RST = true;  // 显式设置 RST
     transmit(rst_msg);
@@ -86,16 +86,16 @@ TCPSenderMessage TCPSender::make_empty_message() const
 {
   TCPSenderMessage msg{};
   msg.seqno = Wrap32::wrap(next_abs_, isn_);
-  msg.RST = reader().has_error() || special_rst_condition_;
+  msg.RST = reader().has_error();
   return msg;
 }
 
 void TCPSender::receive(const TCPReceiverMessage& msg) {
   peer_window_ = msg.window_size;
 
-  // === 关键修改：当收到 ack=None 且 win=0 时，设置特殊错误条件 ===
-  if (!msg.ackno.has_value() && msg.window_size == 0) {
-    special_rst_condition_ = true;
+  if (msg.RST) {
+    writer().set_error();
+    return;
   }
 
   if (!msg.ackno.has_value()) {
@@ -108,24 +108,41 @@ void TCPSender::receive(const TCPReceiverMessage& msg) {
     return;
   }
 
-  acked_abs_ = ack_abs;
+  const uint64_t old_ack_abs = acked_abs_;
+  uint64_t newly_acked = ack_abs - old_ack_abs;
+  while (newly_acked > 0 && !outstanding_.empty()) {
+    auto& seg = outstanding_.front();
+    const size_t seg_len = seg.sequence_length();
 
-  bool popped_any = false;
-  while (!outstanding_.empty()) {
-    const auto& seg = outstanding_.front();
-    const uint64_t seg_start = seg.seqno.unwrap(isn_, acked_abs_);
-    const uint64_t seg_end = seg_start + seg.sequence_length();
-
-    if (ack_abs >= seg_end) {
-      bytes_in_flight_ -= seg.sequence_length();
+    if (newly_acked >= seg_len) {
+      newly_acked -= seg_len;
+      bytes_in_flight_ -= seg_len;
       outstanding_.pop_front();
-      popped_any = true;
-    } else {
-      break;
+      continue;
     }
+
+    // An ACK may split a segment. Keep only the sequence space that remains
+    // outstanding so retransmission and the advertised window stay accurate.
+    size_t consumed = static_cast<size_t>(newly_acked);
+    if (seg.SYN && consumed > 0) {
+      seg.SYN = false;
+      --consumed;
+    }
+
+    const size_t payload_consumed = std::min(consumed, seg.payload.size());
+    seg.payload.erase(0, payload_consumed);
+    consumed -= payload_consumed;
+    if (consumed > 0) {
+      seg.FIN = false;
+    }
+
+    seg.seqno = Wrap32::wrap(ack_abs, isn_);
+    bytes_in_flight_ -= newly_acked;
+    newly_acked = 0;
   }
 
-  if (popped_any) {
+  acked_abs_ = ack_abs;
+  if (ack_abs > old_ack_abs) {
     consecutive_retx_ = 0;
     rto_ms_ = initial_RTO_ms_;
     timer_ms_ = 0;

@@ -13,9 +13,13 @@ void TCPReceiver::receive( TCPSenderMessage message )
     if ( !message.SYN ) return;
     syn_seen_ = true;
     isn_ = message.seqno;
+  } else if ( message.SYN ) {
+    // SYN is only meaningful while establishing the receiver's stream.
+    return;
   }
   const uint64_t checkpoint = reassembler_.writer().bytes_pushed() + 1;
   const uint64_t abs_seq = message.seqno.unwrap( *isn_, checkpoint );
+  if ( !message.SYN && abs_seq == 0 ) return;
   const uint64_t payload_abs_seq = abs_seq + ( message.SYN ? 1 : 0 );
   const uint64_t stream_index = payload_abs_seq - 1;
   reassembler_.insert( stream_index, std::move( message.payload ), message.FIN );

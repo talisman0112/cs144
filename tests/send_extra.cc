@@ -607,6 +607,35 @@ int main()
         ExpectMessage {}.with_no_flags().with_fin( true ).with_payload_size( 0 ).with_seqno( isn + 4 ) );
     }
 
+    {
+      TCPConfig cfg;
+      const Wrap32 isn( rd() );
+      cfg.isn = isn;
+
+      TCPSenderTestHarness test { "No ACK and zero window is not a reset", cfg };
+      test.execute( Receive { { .ackno = {}, .window_size = 0 } }.without_push() );
+      test.execute( HasError { false } );
+      test.execute( Push {} );
+      test.execute( ExpectMessage {}.with_syn( true ).with_seqno( isn ).with_rst( false ) );
+    }
+
+    {
+      TCPConfig cfg;
+      const Wrap32 isn( rd() );
+      cfg.isn = isn;
+
+      TCPSenderTestHarness test { "Partial ACK trims the retransmission", cfg };
+      test.execute( Push {} );
+      test.execute( ExpectMessage {}.with_syn( true ).with_seqno( isn ) );
+      test.execute( AckReceived { Wrap32 { isn + 1 } } );
+      test.execute( Push { "abcdef" } );
+      test.execute( ExpectMessage {}.with_data( "abcdef" ).with_seqno( isn + 1 ) );
+      test.execute( AckReceived { Wrap32 { isn + 3 } }.without_push() );
+      test.execute( ExpectSeqnosInFlight { 4 } );
+      test.execute( Tick { cfg.rt_timeout } );
+      test.execute( ExpectMessage {}.with_data( "cdef" ).with_seqno( isn + 3 ) );
+    }
+
     // test credit: Majd Nasra
     {
       TCPConfig cfg;

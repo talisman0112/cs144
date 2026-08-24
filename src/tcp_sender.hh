@@ -62,5 +62,4 @@ private:
   uint64_t timer_ms_ {0};
   bool fin_sent_ {false};
   bool rst_sent_ {false};
-  bool special_rst_condition_ {false};
 };
